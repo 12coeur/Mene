@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#202124">
+  <title>Cochonnet  &lt;--&gt;  boules Télémétrie par JLH</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="app-header">
+    <a class="logo-link" href="https://www.youtube.com/@jlhumez/playlists"
+       target="_blank" rel="noopener noreferrer" aria-label="Ouvrir la chaîne YouTube">
+      <img src="images/logo.png" alt="Asde Coeur">
+    </a>
+    <h1 class="header-title">Détection des boules</h1>
+    <button id="hamburger-btn" class="hamburger-btn" type="button"
+      aria-label="Ouvrir les réglages" aria-expanded="false">☰</button>
+  </header>
+
+  <div id="sidebar-overlay" class="sidebar-overlay"></div>
+
+  <aside id="sidebar" class="sidebar" aria-label="Réglages de détection">
+     <div class="sidebar-section">
+      <input type="file" id="files" accept="image/*" style="display: none;">
+<a class="help-link" href="aide.html">Comment utiliser cette application</a>
+
+      <button id="apn-btn" class="action-button" type="button">📷 Prendre une photo</button>
+
+      <p id="opencv-status" class="opencv-status">Chargement du moteur de reconnaissance…</p>
+      <p id="workflow-status" class="workflow-status">Attente photo.</p>
+	        <label class="file-label" for="files">Choisir une photo</label> 
+    </div>
+
+    <div class="sidebar-section">
+      <button id="calib-btn" class="action-button secondary" type="button">📍 Recalibrer le fil à plomb</button>
+      <p id="calib-status" class="calib-status">Fil à plomb : non calibré.</p>
+    </div>
+
+    <div class="sidebar-section" id="tuning">
+      <h3 class="sidebar-subtitle">Réglages de l’analyse</h3>
+      <p class="tuning-intro">En cas d’échec de la recherche de cercle, essayez ces curseurs.</p>
+
+      <label class="slider-row" for="cfg-jackTol">
+        <span>Tolérance du diamètre — cochonnet <output id="out-jackTol"></output></span>
+        <input type="range" id="cfg-jackTol" min="10" max="70" step="5" value="40">
+        <small>Augmentez si le cercle blanc n’a pas la taille exacte du cochonnet.</small>
+      </label>
+      <label class="slider-row" for="cfg-ballTol">
+        <span>Tolérance du diamètre — boules <output id="out-ballTol"></output></span>
+        <input type="range" id="cfg-ballTol" min="5" max="40" step="5" value="20">
+        <small>Augmentez si les boules sont plus grosses ou plus petites que prévu.</small>
+      </label>
+      <label class="slider-row" for="cfg-ballRatio">
+        <span>Rapport diamètre boule / cochonnet <output id="out-ballRatio"></output></span>
+        <input type="range" id="cfg-ballRatio" min="2" max="3.5" step="0.05" value="2.5">
+        <small>Boule officielle ≈ 2,4 fois le cochonnet. À ajuster selon votre matériel et le recul.</small>
+      </label>
+      <label class="slider-row" for="cfg-offset">
+        <span>Distance de recherche du centre <output id="out-offset"></output></span>
+        <input type="range" id="cfg-offset" min="10" max="120" step="5" value="60">
+        <small>Augmentez si le cercle orange est loin de la boule au moment de l’analyse.</small>
+      </label>
+      <label class="slider-row" for="cfg-coverage">
+        <span>Netteté du contour exigée <output id="out-coverage"></output></span>
+        <input type="range" id="cfg-coverage" min="20" max="80" step="5" value="50">
+        <small>Baissez pour une photo floue, à contre-jour ou une boule de la couleur du sol.</small>
+      </label>
+      <button id="cfg-reset" class="action-button secondary" type="button">Valeurs par défaut</button>
+    </div>
+
+ 
+  </aside>
+
+  <main class="app-window">
+    <div id="gallery" aria-live="polite"></div>
+    <footer class="app-footer">Jean Luc HUMEZ © 12 2026 - Asde Coeur.</footer>
+  </main>
+
+  <!-- Overlay visée APN (caché par défaut) -->
+  <div id="apn-overlay" class="apn-overlay" hidden>
+    <video id="apn-video" autoplay playsinline muted></video>
+    <canvas id="apn-canvas" class="apn-canvas"></canvas>
+    <div class="apn-controls">
+      <button id="apn-calib" class="action-button secondary" type="button">📍 Recalibrer</button>
+      <button id="apn-trigger" class="action-button" type="button" disabled>⏺ Déclencher</button>
+      <button id="apn-close" class="action-button secondary" type="button">✕ Fermer</button>
+    </div>
+    <p id="apn-status" class="apn-status">Pour faire la photo, votre appareil doit être horizontal</p>
+    <p id="apn-flag" class="apn-flag">Appareil non calibré horizontal</p>
+    <div class="apn-scale">
+      <input type="range" id="apn-scale" min="0.04" max="0.11" step="0.005" value="0.10" aria-label="Taille de la mire">
+      <div id="apn-scale-help" class="apn-scale-help" hidden>Mettez les cercles blancs conformes au cochonnet ou à une boule (petit/grand)</div>
+    </div>
+    <p id="apn-counter" class="apn-counter"></p>
+  </div>
+
+
+  <script>
+    const openCvScript = document.createElement("script");
+    openCvScript.src = "https://docs.opencv.org/4.x/opencv.js";
+    openCvScript.async = true;
+    document.head.appendChild(openCvScript);
+  </script>
+   
+  
+  <script src="cv-core.js" defer></script>
+  <script src="filaplomb.js" defer></script>
+  <script src="script.js" defer></script>
+  <script src="scriptAPN.js" defer></script>
+</body>
+</html>
