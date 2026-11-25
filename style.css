@@ -314,3 +314,60 @@ body.aide-page { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans
 }
 .key-indicator[hidden] { display: none; }
 .key-indicator.pan { color: #ffb74d; border-color: #ffb74d; }
+
+/* Adaptation mobile : la largeur de .stage est calculée en JS depuis
+   le ratio naturel de la photo et la hauteur réellement disponible. */
+@media (max-width: 900px) {
+  .app-window {
+    width: calc(100% - 8px);
+    max-width: none;
+    margin: 4px auto;
+    padding: 6px;
+  }
+
+  .card {
+    padding: 4px;
+  }
+
+  .stage {
+    max-width: 100%;
+    margin-inline: auto;
+  }
+
+  .photo {
+    width: 100%;
+    height: auto;
+    max-width: none;
+    display: block;
+  }
+}
+
+/* Téléphone en portrait : priorité à la largeur et aux commandes lisibles. */
+@media (max-width: 900px) and (orientation: portrait) {
+  .app-header { gap: 6px; }
+  .app-window { flex-direction: column; }
+  .actions { gap: 4px; }
+  .action-button { font-size: 0.82rem; padding: 7px 9px; }
+  .mire-zoom { height: min(42vh, 210px); }
+}
+
+/* Téléphone en paysage : utiliser la hauteur disponible et regrouper
+   les actions en bandeau pour dégager davantage la photo. */
+@media (max-width: 900px) and (orientation: landscape) {
+  .app-header { padding-top: 2px; padding-bottom: 2px; }
+  .logo-link img { max-height: 34px; }
+  .hamburger-btn { font-size: 1.8rem; padding: 4px 8px; }
+  .app-window { margin-top: 2px; padding: 4px; }
+  .actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+    max-width: calc(100% - 16px);
+    gap: 3px;
+  }
+  .action-button { font-size: 0.74rem; padding: 5px 7px; }
+  .mire-zoom { height: min(55vh, 180px); }
+  .status, .mire-instruction, .mire-hint {
+    font-size: 0.72rem;
+    padding: 3px 6px;
+  }
+}
