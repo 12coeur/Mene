@@ -136,6 +136,14 @@
   });
 
   // --- Chargement fichier ---
+  // Force le sélecteur d’images (galerie / dossier Photos) plutôt que la caméra.
+  // L’absence d’attribut capture + accept="image/*" fait que la plupart des
+  // WebView / Chrome Android ouvrent directement le dossier Photos / Galerie.
+  if (filesInput) {
+    filesInput.accept = "image/*";
+    filesInput.removeAttribute("capture");
+  }
+
   filesInput.addEventListener("change", (event) => {
     const files = Array.from(event.target.files || [])
       .filter(f => f.type.startsWith("image/"));
@@ -179,11 +187,63 @@
     gallery.replaceChildren(box);
   }
 
-  function addPhoto(file) {
+  /**
+   * Si la photo chargée est paysage et que l’appareil est en portrait,
+   * on la fait pivoter de 90° pour qu’elle se comporte comme une photo
+   * prise directement avec l’APN (même orientation d’analyse et d’affichage).
+   */
+  async function orientPhotoIfNeeded(file) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const isDevicePortrait = window.matchMedia("(orientation: portrait)").matches;
+        const isPhotoLandscape = img.naturalWidth > img.naturalHeight;
+
+        if (isDevicePortrait && isPhotoLandscape) {
+          // Rotation 90° horaire → image portrait
+          const canvas = document.createElement("canvas");
+          canvas.width = img.naturalHeight;
+          canvas.height = img.naturalWidth;
+          const ctx = canvas.getContext("2d");
+          ctx.translate(canvas.width, 0);
+          ctx.rotate(Math.PI / 2);
+          ctx.drawImage(img, 0, 0);
+          canvas.toBlob(
+            (blob) => {
+              if (blob) {
+                resolve(new File([blob], file.name || "photo.jpg", {
+                  type: "image/jpeg",
+                  lastModified: Date.now()
+                }));
+              } else {
+                resolve(file);
+              }
+            },
+            "image/jpeg",
+            0.92
+          );
+        } else {
+          resolve(file);
+        }
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve(file);
+      };
+      img.src = url;
+    });
+  }
+
+  async function addPhoto(file) {
     releaseCurrent();
     workflowStatus.textContent = "Photo chargée. Attente analyse.";
 
-    const card = createPhotoCard(file);
+    // Uniformiser le traitement photo chargée / photo prise (orientation)
+    const oriented = await orientPhotoIfNeeded(file);
+
+    const card = createPhotoCard(oriented);
     const footer = document.querySelector(".app-footer");
     if (footer) card.append(footer);
 
@@ -266,10 +326,10 @@
     const mireZoom = document.createElement("input");
     mireZoom.type = "range";
     mireZoom.className = "mire-zoom";
-    mireZoom.min = "5";
-    mireZoom.max = "120";
+    mireZoom.min = "10";
+    mireZoom.max = "400";
     mireZoom.step = "1";
-    mireZoom.value = "50";
+    mireZoom.value = "100";
     mireZoom.setAttribute("aria-label", "Taille de la mire");
 
     const mireInstruction = document.createElement("p");
@@ -288,13 +348,11 @@
     keyIndicator.hidden = true;
     card.append(keyIndicator);
 
-stage.append(photo, candidateLayer, mireCanvas);
-card.append(actions);
-if (mireHint) card.append(mireHint);
-card.append(stage, mireInstruction, status);
-card.append(mireZoom);   // ← slider en overlay sur la card, hors stage
-    const objectUrl = URL.createObjectURL(file);
-    currentObjectURL = objectUrl;
+    stage.append(photo, candidateLayer, mireCanvas);
+    card.append(actions);
+    if (mireHint) card.append(mireHint);
+    card.append(stage, mireInstruction, status);
+    card.append(mireZoom);   // ← slider en overlay sur la card, hors stage
 
     // --- État local ---
     let candidate = null;
@@ -307,21 +365,21 @@ card.append(mireZoom);   // ← slider en overlay sur la card, hors stage
     // =======================================================================
     // ZOOM / PAN — état
     // =======================================================================
-    const pointers = new Map();
-    let pinch = null;
+    // Zoom / déplacement réservés à la souris et au clavier (PC).
+    // Aucun gestionnaire de pincement tactile : Android conserve ses gestes natifs.
     let tx = 0, ty = 0, scale = 1;
     const MIN_SCALE = 1, MAX_SCALE = 6;
-    let multiTouchActive = false;
-    card._multiTouch = false;
+    let transformActive = false;
+    card._transformActive = false;
 
     function applyTransform() {
       stage.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
       console.log(`[zoom] transform → translate(${tx.toFixed(1)}, ${ty.toFixed(1)}) scale(${scale.toFixed(2)})`);
     }
 
-    function setMultiTouch(active) {
-      multiTouchActive = active;
-      card._multiTouch = active;
+    function setTransformActive(active) {
+      transformActive = active;
+      card._transformActive = active;
       if (active) {
         stage.classList.add("panning");
         mireController.setLocked(true);
@@ -332,103 +390,12 @@ card.append(mireZoom);   // ← slider en overlay sur la card, hors stage
       }
     }
 
-  // ---- Tactile (pinch 2 doigts) — ancré sur le premier doigt posé ----
-function onPointerDown(e) {
-  if (e.pointerType === "mouse") return;
-  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  console.log(`[zoom] pointerdown tactile id=${e.pointerId}, size=${pointers.size}`);
-
-  if (pointers.size === 2) {
-    // Le PREMIER doigt posé est la première entrée insérée dans la Map
-    const entries = [...pointers.entries()];
-    const firstId = entries[0][0];
-    const first = entries[0][1];     // le premier doigt (ancre)
-    const second = entries[1][1];
-
-    const dx = first.x - second.x;
-    const dy = first.y - second.y;
-    const dist0 = Math.hypot(dx, dy) || 1;
-    const mid0 = {
-      x: (first.x + second.x) / 2,
-      y: (first.y + second.y) / 2
-    };
-
-    // Ancre en coordonnées CLIENT = position du premier doigt
-    const r = stage.getBoundingClientRect();
-    // Position de l'ancre dans le repère du stage AVANT transform (px, py)
-    const px = first.x - r.left;
-    const py = first.y - r.top;
-
-    pinch = {
-      firstId,
-      anchorClient: { x: first.x, y: first.y },
-      anchorStage: { x: px, y: py },   // point sous le doigt, en coords stage
-      dist0,
-      mid0,
-      scale0: scale,
-      tx0: tx, ty0: ty
-    };
-
-    setMultiTouch(true);
-    keyIndicator.textContent = "✌️ Zoom/Pan tactile";
-    keyIndicator.className = "key-indicator";
-    keyIndicator.hidden = false;
-  }
-}
-
-function onPointerMove(e) {
-  if (e.pointerType === "mouse") return;
-  if (!pointers.has(e.pointerId)) return;
-  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  if (pointers.size < 2 || !pinch) return;
-
-  const pts = [...pointers.values()];
-  const first = pts[0];
-  const second = pts[1];
-  const dx = first.x - second.x;
-  const dy = first.y - second.y;
-  const dist = Math.hypot(dx, dy);
-  const mid = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
-
-  const factor = dist / pinch.dist0;
-  const newScale = clamp(pinch.scale0 * factor, MIN_SCALE, MAX_SCALE);
-
-  // L'ancre (position du premier doigt) doit rester fixe à l'écran :
-  //   anchorClient = rectLeft + anchorStage * newScale + tx
-  // => tx = anchorClient - rectLeft - anchorStage * newScale
-  const r = stage.getBoundingClientRect();
-  const ax = pinch.anchorStage.x;
-  const ay = pinch.anchorStage.y;
-
-  let newTx = (pinch.anchorClient.x - r.left) - ax * newScale;
-  let newTy = (pinch.anchorClient.y - r.top) - ay * newScale;
-
-  // Pan : déplacement du milieu des doigts par rapport au milieu initial
-  newTx += mid.x - pinch.mid0.x;
-  newTy += mid.y - pinch.mid0.y;
-
-  tx = newTx;
-  ty = newTy;
-  scale = newScale;
-  applyTransform();
-}
-
-function onPointerUp(e) {
-  if (e.pointerType === "mouse") return;
-  pointers.delete(e.pointerId);
-  console.log(`[zoom] pointerup tactile id=${e.pointerId}, size=${pointers.size}`);
-  if (pointers.size < 2) {
-    pinch = null;
-    if (pointers.size === 0) {
-      setMultiTouch(false);
-      keyIndicator.hidden = true;
+    function resetView() {
+      tx = 0;
+      ty = 0;
+      scale = 1;
+      applyTransform();
     }
-  }
-}    
-    stage.addEventListener("pointerdown", onPointerDown, true);
-    stage.addEventListener("pointermove", onPointerMove, true);
-    stage.addEventListener("pointerup", onPointerUp, true);
-    stage.addEventListener("pointercancel", onPointerUp, true);
 
     // ---- Souris + S / G ----
     let keyMode = null;
@@ -478,7 +445,7 @@ function onPointerUp(e) {
       keyStart = { x: e.clientX, y: e.clientY, tx, ty, scale };
       if (keyMode === "zoom") stage.classList.add("zooming");
       else stage.classList.add("panning");
-      setMultiTouch(true);
+      setTransformActive(true);
 
       const move = (ev) => {
         const dx = ev.clientX - keyStart.x;
@@ -497,7 +464,7 @@ function onPointerUp(e) {
         document.removeEventListener("mousemove", move);
         document.removeEventListener("mouseup", up);
         stage.classList.remove("zooming", "panning");
-        setMultiTouch(false);
+        setTransformActive(false);
       };
       document.addEventListener("mousemove", move);
       document.addEventListener("mouseup", up);
@@ -506,27 +473,37 @@ function onPointerUp(e) {
     // =======================================================================
     // MIRE
     // =======================================================================
-    photo.onload = () => {
-      syncLayer(photo, candidateLayer);
-      syncLayer(photo, mireCanvas);
-      mireController.reset();
-      mireController.setValidated(false);
-      mireController.setLocked(false);
-      applyTransform();
-      status.textContent =
-        "Mire déplaçable. Placez-la sur le cochonnet puis validez.";
-    };
-
-    photo.src = objectUrl;
+    function fitPhotoStage() {
+      if (!photo.naturalWidth || !photo.naturalHeight) return;
+      // Sur mobile, dimensionner la scène à partir du ratio réel de la photo
+      // et de la place disponible, sans jamais déformer l'image.
+      if (window.matchMedia && window.matchMedia("(max-width: 900px)").matches) {
+        const availableWidth = Math.max(1, stage.parentElement.clientWidth);
+        const landscape = window.matchMedia("(orientation: landscape)").matches;
+        const availableHeight = Math.max(180, window.innerHeight * (landscape ? 0.76 : 0.68));
+        const ratio = photo.naturalWidth / photo.naturalHeight;
+        const width = Math.min(availableWidth, availableHeight * ratio);
+        stage.style.width = `${Math.floor(width)}px`;
+        stage.style.maxWidth = "100%";
+        stage.style.marginInline = "auto";
+      } else {
+        stage.style.width = "";
+        stage.style.maxWidth = "";
+        stage.style.marginInline = "";
+      }
+    }
 
     const CENTER_X = 0.4953;
     const CENTER_Y = 0.4914;
 
+    // Créer le contrôleur de mire AVANT de charger la photo pour éviter
+    // la course critique (onload peut se déclencher de façon synchrone
+    // si l’image est en cache) et garantir un recentrage au départ.
     const mireController = createVectorMire(mireCanvas, stage, status, {
       slider: mireZoom,
       instruction: mireInstruction,
       onDragStart: () => {
-        if (!analyzing && !judged && !multiTouchActive) {
+        if (!analyzing && !judged && !transformActive) {
           mireController.setValidated(false);
           candidate = null;
           drawBallCandidates(null);
@@ -534,6 +511,61 @@ function onPointerUp(e) {
       },
       onDrop: () => {}
     });
+
+    function centerMireOnScreen() {
+      // Recentre explicitement la mire au milieu de l’écran / de la scène
+      // au chargement d’une nouvelle photo (xPct / yPct = 50).
+      mireController.reset();
+      mireController.setValidated(false);
+      mireController.setLocked(false);
+      resetView();
+    }
+
+    photo.onload = () => {
+      fitPhotoStage();
+      // Un frame de layout pour que clientWidth / getBoundingClientRect
+      // soient stables avant de positionner la mire.
+      requestAnimationFrame(() => {
+        syncLayer(photo, candidateLayer);
+        syncLayer(photo, mireCanvas);
+        centerMireOnScreen();
+        mireController.redraw();
+        status.textContent =
+          "Mire déplaçable. Placez-la sur le cochonnet puis validez.";
+      });
+    };
+
+    const objectUrl = URL.createObjectURL(file);
+    currentObjectURL = objectUrl;
+    photo.src = objectUrl;
+
+    // Après rotation ou redimensionnement, recalculer la photo et réaligner
+    // les deux calques sur ses dimensions affichées.
+    let resizeFrame = 0;
+    const refreshPhotoLayout = () => {
+      cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(() => {
+        if (!photo.naturalWidth) return;
+        fitPhotoStage();
+        syncLayer(photo, candidateLayer);
+        drawBallCandidates(ballCandidates[currentBallIndex] || null);
+        syncLayer(photo, mireCanvas);
+        // Si la mire n’est pas encore validée, on la recentre après
+        // un changement d’orientation / de taille d’écran.
+        if (!candidate && !judged) {
+          centerMireOnScreen();
+        } else {
+          mireController.redraw();
+          applyTransform();
+        }
+      });
+    };
+    if ("ResizeObserver" in window) {
+      const photoResizeObserver = new ResizeObserver(refreshPhotoLayout);
+      photoResizeObserver.observe(card);
+    }
+    window.addEventListener("orientationchange", refreshPhotoLayout, { passive: true });
+    window.addEventListener("resize", refreshPhotoLayout, { passive: true });
 
     function mireImageCenter() {
       const r = mireController.getRect();
@@ -696,7 +728,7 @@ function onPointerUp(e) {
           ...ball,
           label: String.fromCharCode(65 + validatedBalls.length)
         });
-      }
+		      }
       showNextCandidate();
     });
 
@@ -725,7 +757,7 @@ function onPointerUp(e) {
     }
 
     function startAdjust(e, source, el) {
-      if (card._multiTouch) {
+      if (card._transformActive) {
         console.log("[zoom] disque : multiTouch actif, drag inhibé");
         return false;
       }
@@ -837,7 +869,7 @@ function onPointerUp(e) {
     refineBtn.addEventListener("pointercancel", e => endAdjust(e, true));
 
     stage.addEventListener("pointermove", (e) => {
-      if (card._multiTouch || adjust) {
+      if (card._transformActive || adjust) {
         if (!adjust) stage.style.cursor = "";
         return;
       }
@@ -850,7 +882,7 @@ function onPointerUp(e) {
     });
 
     stage.addEventListener("pointerdown", (e) => {
-      if (card._multiTouch) {
+      if (card._transformActive) {
         console.log("[zoom] disque : multiTouch actif, drag inhibé");
         return;
       }
@@ -996,7 +1028,7 @@ function onPointerUp(e) {
   function syncLayer(photo, canvas) {
     const w = photo.clientWidth;
     const h = photo.clientHeight;
-    if (!w || !h) return;
+	    if (!w || !h) return;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
@@ -1157,6 +1189,7 @@ function onPointerUp(e) {
 
     return {
       reset,
+      redraw: draw,
       getRect: rect,
       isDragging: () => dragging,
       setLocked: (v) => {
@@ -1201,3 +1234,4 @@ function onPointerUp(e) {
   }
 
 })();
+		
